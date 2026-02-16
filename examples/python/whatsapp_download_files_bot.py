@@ -4,8 +4,55 @@ from pprint import pprint
 import requests
 from flask import Flask
 from flask import request
+from urllib.parse import urlparse
+import socket
+import ipaddress
 
 app = Flask(__name__)
+
+
+def is_url_safe(client_url: str) -> bool:
+    """
+    Basic SSRF protection: only allow http/https URLs whose resolved IPs are not
+    private, loopback, link-local, or otherwise non-routable.
+    """
+    try:
+        parsed = urlparse(client_url)
+    except Exception:
+        return False
+
+    if not parsed.scheme or not parsed.netloc:
+        return False
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    try:
+        addrinfo_list = socket.getaddrinfo(hostname, None)
+    except OSError:
+        return False
+
+    for family, _, _, _, sockaddr in addrinfo_list:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+        ):
+            return False
+
+    return True
 
 
 def send_message(chat_id, text):
@@ -65,6 +112,12 @@ def whatsapp_webhook():
     # For groups - who sent the message
     participant = payload.get('participant')
     # IMPORTANT - Always send seen before sending new message
+    if not is_url_safe(client_url):
+        error_text = "Received an invalid or unsafe media URL; file was not downloaded."
+        print(error_text, client_url)
+        send_message(chat_id=chat_id, text=error_text)
+        return "Invalid media URL"
+
     send_seen(chat_id=chat_id, message_id=message_id, participant=participant)
 
     # Download the file and download it to the current folder
