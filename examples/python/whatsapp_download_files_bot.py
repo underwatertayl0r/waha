@@ -1,9 +1,11 @@
 from os.path import abspath
 from pprint import pprint
 
+import os
 import requests
 from flask import Flask
 from flask import request
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
@@ -67,10 +69,24 @@ def whatsapp_webhook():
     # IMPORTANT - Always send seen before sending new message
     send_seen(chat_id=chat_id, message_id=message_id, participant=participant)
 
-    # Download the file and download it to the current folder
+    # Download the file and save it to a local downloads folder
     client_url = payload["mediaUrl"]
-    filename = client_url.split("/")[-1]
-    path = abspath("./" + filename)
+    parsed_url = urlparse(client_url)
+    # Use only the basename of the URL path to avoid directory traversal
+    filename = os.path.basename(parsed_url.path)
+    if not filename:
+        # Fallback to a default name if the URL does not contain a valid basename
+        filename = "downloaded_file"
+
+    download_dir = abspath("./downloads")
+    os.makedirs(download_dir, exist_ok=True)
+    unsafe_path = os.path.join(download_dir, filename)
+    path = os.path.normpath(unsafe_path)
+    # Ensure that the final path is within the intended download directory
+    if os.path.commonpath([download_dir, path]) != download_dir:
+        return "Invalid file path"
+
+    r.raise_for_status()
     r = requests.get(client_url)
     with open(path, "wb") as f:
         f.write(r.content)
